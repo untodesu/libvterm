@@ -235,10 +235,10 @@ static void vterm_csi_cux(struct vterm *vt, int chr)
 static void vterm_csi_cup(struct vterm *vt)
 {
     unsigned int x = 1, y = 1;
-    if(vt->parser.argv_map[0] && vt->parser.argv_val[0])
-        x = vt->parser.argv_val[0];
     if(vt->parser.argv_map[1] && vt->parser.argv_val[1])
-        y = vt->parser.argv_val[1];
+        x = vt->parser.argv_val[1];
+    if(vt->parser.argv_map[0] && vt->parser.argv_val[0])
+        y = vt->parser.argv_val[0];
     if(x > vt->mode.scr_w)
         x = vt->mode.scr_w;
     if(y >= vt->mode.scr_h)
