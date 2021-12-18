@@ -25,18 +25,6 @@ static const char *vterm_utodec(unsigned int v)
 #undef UTODEC_BASE
 }
 
-/* vterm_setmode(vt)                                    */
-/* reallocate the cell buffer then clear the screen     */
-static void vterm_setmode(struct vterm *vt)
-{
-    vt->callbacks.mem_free(vt->buffer);
-    vt->buffer = vt->callbacks.mem_alloc(vt->mode.scr_w * vt->mode.scr_h);
-    vt->cursor.x = vt->cursor.y = 0;
-    if(vt->callbacks.set_cursor)
-        vt->callbacks.set_cursor(vt, &vt->cursor);
-    vterm_clear(vt, 0, 0, vt->mode.scr_w, vt->mode.scr_h - 1);
-}
-
 /* vterm_response(vt, v[], n, chr)                      */
 /* send a terminal response for something               */
 static void vterm_response(struct vterm *vt, const unsigned int *v, size_t n, int chr)
@@ -72,6 +60,18 @@ static void vterm_clear(struct vterm *vt, unsigned int x0, unsigned int y0, unsi
     }
 }
 
+/* vterm_setmode(vt)                                    */
+/* reallocate the cell buffer then clear the screen     */
+static void vterm_setmode(struct vterm *vt)
+{
+    vt->callbacks.mem_free(vt->buffer);
+    vt->buffer = vt->callbacks.mem_alloc(vt->mode.scr_w * vt->mode.scr_h);
+    vt->cursor.x = vt->cursor.y = 0;
+    if(vt->callbacks.set_cursor)
+        vt->callbacks.set_cursor(vt, &vt->cursor);
+    vterm_clear(vt, 0, 0, vt->mode.scr_w, vt->mode.scr_h - 1);
+}
+
 /* vterm_scroll(vt, nl)                                 */
 /* scroll the screen nl lines down (scroll up TBA)      */
 static void vterm_scroll(struct vterm *vt, unsigned int nl)
@@ -92,11 +92,11 @@ static void vterm_scroll(struct vterm *vt, unsigned int nl)
     }
 
     for(i = 0; i < vt->mode.scr_w; i++) {
-        cell = vt->buffer + end + i;
+        cell = vt->buffer + i + end;
         cell->attrib = default_attrib;
         cell->chr = VTERM_CHR_NUL;
         if(vt->callbacks.draw_cell)
-            vt->callbacks.draw_cell(vt, cell->chr, i % vt->mode.scr_w, i / vt->mode.scr_w, &cell->attrib);
+            vt->callbacks.draw_cell(vt, cell->chr, i % vt->mode.scr_w, line, &cell->attrib);
     }
 
     vt->cursor.y -= (vt->cursor.y >= nl) ? nl : vt->cursor.y;
@@ -418,11 +418,13 @@ static void vterm_csi_dsr(struct vterm *vt, int chr)
 static int vterm_csi_dec_vt(struct vterm *vt, int chr)
 {
     switch(chr) {
-        case '7': case 's': /* VT510 - store cursor position */
+        case '7': /* VT510 - store cursor position */
+        case 's':
             if(vt->curstack_sp < VTERM_MAX_CURS)
                 vt->curstack[++vt->curstack_sp - 1] = vt->cursor;
             return 1;
-        case '8': case 'u': /* VT510 - restore cursor position */
+        case '8': /* VT510 - restore cursor position */
+        case 'u':
             if(vt->curstack_sp) {
                 vt->cursor = vt->curstack[vt->curstack_sp-- - 1];
                 if(vt->callbacks.set_cursor)
@@ -439,7 +441,6 @@ static int vterm_csi_dec_vt(struct vterm *vt, int chr)
 static void vterm_putchar(struct vterm *vt, int chr)
 {
     unsigned int arg;
-    unsigned int argr[VTERM_MAX_ARGS] = { 0 };
 
     if(vt->parser.state == VTERM_STATE_ESCAPE) {
         if(chr != VTERM_CHR_ESC) {

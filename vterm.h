@@ -49,6 +49,8 @@
 #define VTERM_STATE_ATTRIB  (2)
 #define VTERM_STATE_ENDVAL  (3)
 
+struct vterm;
+
 struct vterm_attrib {
     unsigned int attr;
     unsigned int bg, fg;
@@ -73,10 +75,10 @@ struct vterm_mode {
 struct vterm_callbacks {
     void *(*mem_alloc)(size_t n);
     void (*mem_free)(void *ptr);
-    void (*misc_sequence)(const struct vterm *vt, int ec);
+    void (*misc_sequence)(const struct vterm *vt, int chr);
     void (*set_cursor)(const struct vterm *vt, const struct vterm_cursor *cursor);
     void (*mode_change)(const struct vterm *vt, const struct vterm_mode *new_mode);
-    void (*draw_cell)(const struct vterm *vt, int chr, unsigned int x, unsigned int y, const struct vterm_attrib *attr);
+    void (*draw_cell)(const struct vterm *vt, int chr, unsigned int x, unsigned int y, const struct vterm_attrib *attrib);
     void (*response)(const struct vterm *vt, int chr);
     void (*ascii)(const struct vterm *vt, int chr);
 };
