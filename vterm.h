@@ -2,19 +2,17 @@
 #define _VTERM_H_ 1
 #include <stddef.h>
 
-#define VTERM_CHR_NUL       (0x00)  /* nothing          */
-#define VTERM_CHR_BEL       (0x07)  /* audible signal   */
-#define VTERM_CHR_BS        (0x08)  /* backspace        */
-#define VTERM_CHR_HT        (0x09)  /* horizontal tab   */
-#define VTERM_CHR_LF        (0x0A)  /* linefeed/newline */
-#define VTERM_CHR_VT        (0x0B)  /* vertical tab     */
-#define VTERM_CHR_FF        (0x0C)  /* formfeed/newpage */
-#define VTERM_CHR_CR        (0x0D)  /* carriage return  */
-#define VTERM_CHR_ESC       (0x1B)  /* sequence start   */
-#define VTERM_CHR_DEL       (0x7F)  /* delete character */
-#define VTERM_CHR_DCS       (0x90)  /* device control   */
-#define VTERM_CHR_CSI       (0x9B)  /* control sequence */
-#define VTERM_CHR_OSC       (0x9D)  /* system command   */
+#define VTERM_CHR_NUL (0x00) /* nothing          */
+#define VTERM_CHR_BEL (0x07) /* audible signal   */
+#define VTERM_CHR_BS  (0x08) /* backspace        */
+#define VTERM_CHR_HT  (0x09) /* horizontal tab   */
+#define VTERM_CHR_LF  (0x0A) /* linefeed/newline */
+#define VTERM_CHR_VT  (0x0B) /* vertical tab     */
+#define VTERM_CHR_FF  (0x0C) /* formfeed/newpage */
+#define VTERM_CHR_CR  (0x0D) /* carriage return  */
+#define VTERM_CHR_DEL (0x7F) /* delete character */
+#define VTERM_CHR_ESC (0x1B) /* sequence start   */
+#define VTERM_CHR_CSI (0x5B) /* control sequence */
 
 #define VTERM_ATTR_BOLD     (1 << 0)
 #define VTERM_ATTR_DIM      (1 << 1)
@@ -30,17 +28,21 @@
 #define VTERM_ATTR_UNDERSCR (1 << 11)
 #define VTERM_ATTR_BRIGHT   (1 << 12)
 
-#define VTERM_COLOR_BLK     (0)
-#define VTERM_COLOR_RED     (1)
-#define VTERM_COLOR_GRN     (2)
-#define VTERM_COLOR_YLW     (3)
-#define VTERM_COLOR_BLU     (4)
-#define VTERM_COLOR_MAG     (5)
-#define VTERM_COLOR_CYN     (6)
-#define VTERM_COLOR_WHT     (7)
-#define VTERM_COLOR_DEF     (9)
+#define VTERM_COLOR_BLK (0)
+#define VTERM_COLOR_RED (1)
+#define VTERM_COLOR_GRN (2)
+#define VTERM_COLOR_YLW (3)
+#define VTERM_COLOR_BLU (4)
+#define VTERM_COLOR_MAG (5)
+#define VTERM_COLOR_CYN (6)
+#define VTERM_COLOR_WHT (7)
+#define VTERM_COLOR_DEF (9)
 
-#define VTERM_MAX_ARGS      (8)
+#define VTERM_MODEF_COLOR  (1 << 0)
+#define VTERM_MODEF_SCROLL (1 << 1)
+
+#define VTERM_MAX_ARGS (8)
+#define VTERM_MAX_CURS (8)
 
 #define VTERM_STATE_ESCAPE  (0)
 #define VTERM_STATE_BRACKET (1)
@@ -60,16 +62,16 @@ struct vterm_cell {
 struct vterm_cursor {
     unsigned int x;
     unsigned int y;
-    int visible;
 };
 
 struct vterm_mode {
-    unsigned int scr_w, scr_h;
-    int color, scroll;
+    unsigned int flags;
+    unsigned int scr_w;
+    unsigned int scr_h;
 };
 
 struct vterm_callbacks {
-    void*(*mem_alloc)(size_t n);
+    void *(*mem_alloc)(size_t n);
     void (*mem_free)(void *ptr);
     void (*misc_sequence)(const struct vterm *vt, int ec);
     void (*set_cursor)(const struct vterm *vt, const struct vterm_cursor *cursor);
@@ -93,6 +95,8 @@ struct vterm {
     struct vterm_cursor cursor;
     struct vterm_mode mode;
     struct vterm_parser parser;
+    struct vterm_cursor curstack[VTERM_MAX_CURS];
+    unsigned int curstack_sp;
     void *user;
 };
 

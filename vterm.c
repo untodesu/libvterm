@@ -1,12 +1,62 @@
 #include <ctype.h>
-#include <stdlib.h>
 #include <string.h>
 #include <vterm.h>
 
-static struct vterm_attrib default_attrib = {
-    0, VTERM_COLOR_BLK, VTERM_COLOR_WHT
-};
+static struct vterm_attrib default_attrib = { 0, VTERM_COLOR_BLK, VTERM_COLOR_WHT };
 
+/* vterm_utodec(v)                                      */
+/* convert an unsigned integer to a decimal string      */
+static const char *vterm_utodec(unsigned int v)
+{
+#define UTODEC_BASE  10
+#define UTODEC_BSIZE 32
+    static const char alpha[UTODEC_BASE] = "0123456789";
+    static char buffer[UTODEC_BSIZE] = { 0 };
+    char *sp = buffer + UTODEC_BSIZE - 1;
+    *(--sp) = VTERM_CHR_NUL;
+    if(v == 0)
+        *(--sp) = alpha[0];
+    while(v) {
+        *(--sp) = alpha[v % UTODEC_BASE];
+        v /= UTODEC_BASE;
+    }
+    return sp;
+#undef UTODEC_BSIZE
+#undef UTODEC_BASE
+}
+
+/* vterm_setmode(vt)                                    */
+/* reallocate the cell buffer then clear the screen     */
+static void vterm_setmode(struct vterm *vt)
+{
+    vt->callbacks.mem_free(vt->buffer);
+    vt->buffer = vt->callbacks.mem_alloc(vt->mode.scr_w * vt->mode.scr_h);
+    vt->cursor.x = vt->cursor.y = 0;
+    if(vt->callbacks.set_cursor)
+        vt->callbacks.set_cursor(vt, &vt->cursor);
+    vterm_clear(vt, 0, 0, vt->mode.scr_w, vt->mode.scr_h - 1);
+}
+
+/* vterm_response(vt, v[], n, chr)                      */
+/* send a terminal response for something               */
+static void vterm_response(struct vterm *vt, const unsigned int *v, size_t n, int chr)
+{
+    const char *sv;
+    if(vt->callbacks.response) {
+        vt->callbacks.response(vt, VTERM_CHR_ESC);
+        vt->callbacks.response(vt, VTERM_CHR_CSI);
+        while(n--) {
+            sv = vterm_utodec(*v++);
+            do {
+                vt->callbacks.response(vt, *sv++);
+            } while(sv);
+        }
+        vt->callbacks.response(vt, chr);
+    }
+}
+
+/* vterm_clear(vt, x0, y0, x1, y1)                      */
+/* clear a part of the screen or the whole screen       */
 static void vterm_clear(struct vterm *vt, unsigned int x0, unsigned int y0, unsigned int x1, unsigned int y1)
 {
     unsigned int i, beg, end;
@@ -22,6 +72,8 @@ static void vterm_clear(struct vterm *vt, unsigned int x0, unsigned int y0, unsi
     }
 }
 
+/* vterm_scroll(vt, nl)                                 */
+/* scroll the screen nl lines down (scroll up TBA)      */
 static void vterm_scroll(struct vterm *vt, unsigned int nl)
 {
     unsigned int i, line, end;
@@ -52,6 +104,8 @@ static void vterm_scroll(struct vterm *vt, unsigned int nl)
         vt->callbacks.set_cursor(vt, &vt->cursor);
 }
 
+/* vterm_newline(vt, cr)                                */
+/* move the cursor one line down with carriage returns  */
 static void vterm_newline(struct vterm *vt, int cr)
 {
     if(cr)
@@ -59,7 +113,7 @@ static void vterm_newline(struct vterm *vt, int cr)
     vt->cursor.y++;
 
     if(vt->cursor.y == vt->mode.scr_h) {
-        if(vt->mode.scroll) {
+        if(vt->mode.flags & VTERM_MODEF_SCROLL) {
             vterm_scroll(vt, 1);
             return;
         }
@@ -74,11 +128,18 @@ set_cursor:
         vt->callbacks.set_cursor(vt, &vt->cursor);
 }
 
+/* vterm_print(vt, chr)                                 */
+/* handle ascii cursor movement and text data           */
 static void vterm_print(struct vterm *vt, int chr)
 {
     unsigned int i, tab;
     struct vterm_cell *cell;
     switch(chr) {
+        case VTERM_CHR_BEL:
+        case VTERM_CHR_DEL:
+            if(vt->callbacks.ascii)
+                vt->callbacks.ascii(vt, chr);
+            break;
         case VTERM_CHR_BS:
             if(vt->cursor.x >= 1) {
                 vt->cursor.x--;
@@ -108,11 +169,6 @@ static void vterm_print(struct vterm *vt, int chr)
             if(vt->callbacks.set_cursor)
                 vt->callbacks.set_cursor(vt, &vt->cursor);
             break;
-        case VTERM_CHR_BEL:
-        case VTERM_CHR_DEL:
-            if(vt->callbacks.ascii)
-                vt->callbacks.ascii(vt, chr);
-            break;
         default:
             if(vt->cursor.x >= vt->mode.scr_w)
                 vterm_newline(vt, 1);
@@ -127,28 +183,32 @@ static void vterm_print(struct vterm *vt, int chr)
     }
 }
 
-/* Cursor X.
- * Moves the cursor. */
-static void vterm_csi_cux(struct vterm *vt, int dc)
+/* vterm_csi_cux(vt, chr)                               */
+/* cursor x - move the cursor vertically/horizontally   */
+static void vterm_csi_cux(struct vterm *vt, int chr)
 {
-    unsigned int attrib = vt->parser.argv_val[0];
+    long value;
+    int vertical, direction;
+    unsigned int attrib, max, *cur;
+    vertical = (chr == 'A' || chr == 'B');
+    direction = (chr == 'B' || chr == 'C') ? 1 : -1;
+    attrib = vt->parser.argv_val[0];
     if(!vt->parser.argv_map[0] || !attrib)
         attrib = 1;
-    int dir = (dc == 'B' || dc == 'C') ? 1 : -1;
-    int *pp = (dc == 'A' || dc == 'B') ? &vt->cursor.y : &vt->cursor.x;
-    int max = (dc == 'A' || dc == 'B') ? vt->mode.scr_h : vt->mode.scr_w;
-    int val = *pp + dir * attrib;
-    if(val < 0)
-        val = 0;
-    if(val > max)
-        val = max;
-    *pp = val;
+    max = vertical ? vt->mode.scr_h : vt->mode.scr_w;
+    cur = vertical ? &vt->cursor.y : &vt->cursor.x;
+    value = *cur + direction * attrib;
+    if(value < 0)
+        value = 0;
+    if(value > max)
+        value = max;
+    *cur = (unsigned int)value;
     if(vt->callbacks.set_cursor)
         vt->callbacks.set_cursor(vt, &vt->cursor);
 }
 
-/* Cursor position.
- * Moves the cursor. */
+/* vterm_csi_cup(vt)                                    */
+/* cursor position - set the cursor position            */
 static void vterm_csi_cup(struct vterm *vt)
 {
     unsigned int x = 1, y = 1;
@@ -166,8 +226,8 @@ static void vterm_csi_cup(struct vterm *vt)
         vt->callbacks.set_cursor(vt, &vt->cursor);
 }
 
-/* Erase in Display.
- * Clears a part of the screen. */
+/* vterm_csi_ed(vt)                                     */
+/* erase in display - clear a part of the screen        */
 static void vterm_csi_ed(struct vterm *vt)
 {
     unsigned int attrib = vt->parser.argv_val[0];
@@ -186,8 +246,8 @@ static void vterm_csi_ed(struct vterm *vt)
     }
 }
 
-/* Erase in Line.
- * Erases a part of the line. */
+/* vterm_csi_el(vt)                                     */
+/* erase in line - clear a part of the line             */
 static void vterm_csi_el(struct vterm *vt)
 {
     unsigned int arg = vt->parser.argv_val[0];
@@ -206,8 +266,8 @@ static void vterm_csi_el(struct vterm *vt)
     }
 }
 
-/* Select Graphic Rendition.
- * Sets colors and style of the characters. */
+/* vterm_csi_sgr(vt)                                    */
+/* select graphic rendition - color/style of the text   */
 static void vterm_csi_sgr(struct vterm *vt)
 {
     int reset_color;
@@ -300,16 +360,8 @@ static void vterm_csi_sgr(struct vterm *vt)
     }
 }
 
-static void vterm_setmode(struct vterm *vt)
-{
-    vt->callbacks.mem_free(vt->buffer);
-    vt->buffer = vt->callbacks.mem_alloc(vt->mode.scr_w * vt->mode.scr_h);
-    vt->cursor.x = vt->cursor.y = 0;
-    if(vt->callbacks.set_cursor)
-        vt->callbacks.set_cursor(vt, &vt->cursor);
-    vterm_clear(vt, 0, 0, vt->mode.scr_w, vt->mode.scr_h - 1);
-}
-
+/* vterm_csi_mode(vt)                                   */
+/* set video mode - sets the terminal video mode        */
 static void vterm_csi_mode(struct vterm *vt)
 {
     unsigned int mode = 0;
@@ -320,22 +372,28 @@ static void vterm_csi_mode(struct vterm *vt)
             case 0:
                 vt->mode.scr_w = 40;
                 vt->mode.scr_h = 25;
-                vt->mode.color = 0;
+                vt->mode.flags = 0;
+                vt->mode.flags |= VTERM_MODEF_SCROLL;
                 break;
             case 1:
                 vt->mode.scr_w = 40;
                 vt->mode.scr_h = 25;
-                vt->mode.color = 1;
+                vt->mode.flags = 0;
+                vt->mode.flags |= VTERM_MODEF_COLOR;
+                vt->mode.flags |= VTERM_MODEF_SCROLL;
                 break;
             case 2:
                 vt->mode.scr_w = 80;
                 vt->mode.scr_h = 25;
-                vt->mode.color = 0;
+                vt->mode.flags = 0;
+                vt->mode.flags |= VTERM_MODEF_SCROLL;
                 break;
             case 3:
                 vt->mode.scr_w = 80;
                 vt->mode.scr_h = 25;
-                vt->mode.color = 1;
+                vt->mode.flags = 0;
+                vt->mode.flags |= VTERM_MODEF_COLOR;
+                vt->mode.flags |= VTERM_MODEF_SCROLL;
                 break;
         }
 
@@ -343,13 +401,49 @@ static void vterm_csi_mode(struct vterm *vt)
     }
 }
 
-static void vterm_putchar(struct vterm *vt, int c)
+/* vterm_csi_dsr(vt, chr)                               */
+/* device status report - respond with cursor position  */
+static void vterm_csi_dsr(struct vterm *vt, int chr)
+{
+    unsigned int args[2];
+    if(chr == 'n' && vt->parser.argv_map[0] && vt->parser.argv_val[0] == 6) {
+        args[0] = vt->mode.scr_h;
+        args[1] = vt->mode.scr_w;
+        vterm_response(vt, args, 2, 'R');
+    }
+}
+
+/* vterm_csi_dec_vt(vt, chr)                            */
+/* handle some of DEC VT series private sequences       */
+static int vterm_csi_dec_vt(struct vterm *vt, int chr)
+{
+    switch(chr) {
+        case '7': case 's': /* VT510 - store cursor position */
+            if(vt->curstack_sp < VTERM_MAX_CURS)
+                vt->curstack[++vt->curstack_sp - 1] = vt->cursor;
+            return 1;
+        case '8': case 'u': /* VT510 - restore cursor position */
+            if(vt->curstack_sp) {
+                vt->cursor = vt->curstack[vt->curstack_sp-- - 1];
+                if(vt->callbacks.set_cursor)
+                    vt->callbacks.set_cursor(vt, &vt->cursor);
+            }
+            return 1;
+    }
+
+    return 0;
+}
+
+/* vterm_putchar(vt, chr)                               */
+/* handle raw data from the terminal implementation     */
+static void vterm_putchar(struct vterm *vt, int chr)
 {
     unsigned int arg;
+    unsigned int argr[VTERM_MAX_ARGS] = { 0 };
 
     if(vt->parser.state == VTERM_STATE_ESCAPE) {
-        if(c != VTERM_CHR_ESC) {
-            vterm_print(vt, c);
+        if(chr != VTERM_CHR_ESC) {
+            vterm_print(vt, chr);
             goto done;
         }
 
@@ -361,10 +455,10 @@ static void vterm_putchar(struct vterm *vt, int c)
     }
 
     if(vt->parser.state == VTERM_STATE_BRACKET) {
-        if(c != '[') {
+        if(chr != VTERM_CHR_CSI) {
             vt->parser.prefix_chr = 0;
             vt->parser.state = VTERM_STATE_ESCAPE;
-            vterm_print(vt, c);
+            vterm_print(vt, chr);
             goto done;
         }
 
@@ -373,14 +467,14 @@ static void vterm_putchar(struct vterm *vt, int c)
     }
 
     if(vt->parser.state == VTERM_STATE_ATTRIB) {
-        if(c == '<' || c == '=' || c == '>' || c == '?' || c == '=') {
-            vt->parser.prefix_chr = c;
+        if(chr == '<' || chr == '=' || chr == '>' || chr == '?' || chr == '=') {
+            vt->parser.prefix_chr = chr;
             goto done;
         }
 
-        if(isdigit(c)) {
+        if(isdigit(chr)) {
             vt->parser.argv_val[vt->parser.argp] *= 10;
-            vt->parser.argv_val[vt->parser.argp] += (c - '0');
+            vt->parser.argv_val[vt->parser.argp] += (chr - '0');
             vt->parser.argv_map[vt->parser.argp] = 1;
         }
         else {
@@ -396,14 +490,17 @@ static void vterm_putchar(struct vterm *vt, int c)
 
 done:
     if(vt->parser.state == VTERM_STATE_ENDVAL) {
-        if(c == ';') {
+        if(chr == ';') {
             vt->parser.state = VTERM_STATE_ATTRIB;
             return;
         }
 
-        switch(c) {
-            case 'A': case 'B': case 'C': case 'D':
-                vterm_csi_cux(vt, c);
+        switch(chr) {
+            case 'A':
+            case 'B':
+            case 'C':
+            case 'D':
+                vterm_csi_cux(vt, chr);
                 break;
             case 'G':
                 arg = vt->parser.argv_val[0];
@@ -436,12 +533,12 @@ done:
             case 'h':
                 vterm_csi_mode(vt);
                 break;
+            case 'n':
+                vterm_csi_dsr(vt, chr);
+                break;
             default:
-                /* Allows different implementations to parse
-                 * standard and private control sequences like
-                 * VT220's cursor ops in a VGA textmode driver. */
-                if(vt->callbacks.misc_sequence)
-                    vt->callbacks.misc_sequence(vt, c);
+                if(!vterm_csi_dec_vt(vt, chr) && vt->callbacks.misc_sequence)
+                    vt->callbacks.misc_sequence(vt, chr);
                 break;
         }
 
@@ -451,6 +548,8 @@ done:
     }
 }
 
+/* vterm_init(vt, callbacks, user)                      */
+/* initialize a libvterm instance with default values   */
 int vterm_init(struct vterm *vt, const struct vterm_callbacks *callbacks, void *user)
 {
     memset(vt, 0, sizeof(struct vterm));
@@ -464,14 +563,18 @@ int vterm_init(struct vterm *vt, const struct vterm_callbacks *callbacks, void *
     /* Default mode: text 80x25 color */
     vt->mode.scr_w = 80;
     vt->mode.scr_h = 25;
-    vt->mode.color = 1;
-    vt->mode.scroll = 1;
+    vt->mode.flags = 0;
+    vt->mode.flags |= VTERM_MODEF_COLOR;
+    vt->mode.flags |= VTERM_MODEF_SCROLL;
 
     vt->parser.argp = 0;
     vt->parser.prefix_chr = VTERM_CHR_NUL;
     vt->parser.state = VTERM_STATE_ESCAPE;
 
     vt->current_attrib = default_attrib;
+
+    memset(vt->curstack, 0, sizeof(vt->curstack));
+    vt->curstack_sp = 0;
 
     memset(vt->parser.argv_map, 0, sizeof(vt->parser.argv_map));
     memset(vt->parser.argv_val, 0, sizeof(vt->parser.argv_val));
@@ -481,12 +584,16 @@ int vterm_init(struct vterm *vt, const struct vterm_callbacks *callbacks, void *
     return 1;
 }
 
+/* vterm_shutdown(vt)                                   */
+/* shutdown the libvterm instance                       */
 void vterm_shutdown(struct vterm *vt)
 {
     vt->callbacks.mem_free(vt->buffer);
     memset(vt, 0, sizeof(struct vterm));
 }
 
+/* vterm_write(vt, s, n)                                */
+/* call vterm_putchar for all the values in the buffer  */
 int vterm_write(struct vterm *vt, const void *s, size_t n)
 {
     const char *sp = s;
