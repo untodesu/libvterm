@@ -23,7 +23,9 @@ The way library communicates with the outer world is callbacks: libvterm has abo
 8. `ascii` - handle miscellaneous ASCII escape characters.
 
 ## Minimal example
-This is taken from [Demos](https://github.com/undnull/demos) (from about [here](https://github.com/undnull/demos/blob/master/arch/x86_64/boot/tmvga.c))
+This is taken from [Demos](https://github.com/undnull/demos) (from about [here](https://github.com/undnull/demos/blob/master/arch/x86_64/boot/tmvga.c))  
+
+#### Code
 ```c
 static void on_misc_sequence(
     const struct vterm *vt, int chr)
@@ -80,4 +82,7 @@ int init_tmvga(/* ... some bootloader stuff ... */)
 }
 
 ```
+
+#### Action!
+![](example.jpg)
 
