@@ -24,7 +24,7 @@ The way library communicates with the outer world is callbacks: libvterm has abo
 
 ## Minimal example
 ~~This is taken from [Demos](https://github.com/undnull/demos) (from about [here](https://github.com/undnull/demos/blob/master/arch/x86_64/boot/tmvga.c))~~  
-The above code doesn't exist anymore :)
+The above source file doesn't exist anymore :)
 
 #### Code
 ```c
